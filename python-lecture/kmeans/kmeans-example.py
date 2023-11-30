@@ -64,3 +64,6 @@ def RSS(clusters, data):
 
 RSS(random_clusters, X)
 
+from UDFs import KMeans
+km = KMeans(k = 4)
+km.fit(X = X)
