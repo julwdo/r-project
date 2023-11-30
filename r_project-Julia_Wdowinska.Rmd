@@ -1,0 +1,293 @@
+---
+title: "Using Logistic Regression to Assess Credit Risk"
+author: "Julia Maria Wdowinska"
+output:
+  html_document:
+    toc: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading the necessary libraries
+
+```{r, results = 'hide', warning = FALSE, message = FALSE}
+library(foreign) # To load the data
+library(extraDistr) # To create a Bernoulli variable
+library(tidyverse)
+library(lmtest) # To estimate logit with robust standard errors
+library(sandwich)
+library(car) # To perform the Wald test
+library(pscl) # To compute McFadden R2
+library(margins) # To compute average marginal effects (AME)
+```
+
+# Setting the working directory
+
+```{r, results = 'hide', warning = FALSE, message = FALSE}
+setwd("D:/Studies/Materials/Second-cycle/I year/I semester/Coding for DS and DM/R/r-project")
+```
+
+# Preparing the data
+
+## Loading the data
+
+```{r, warning = FALSE, message = FALSE}
+data <- read.spss("bankloan.sav", to.data.frame = TRUE)
+head(data)
+```
+`bankloan.sav` is an example data set provided by IBM. It contains information on 700 past and 150 prospective bank customers.
+
+The variables of interest are the following:\
+`age` - age in years,\
+`ed` - level of education,\
+`employ` - years with current employer,\
+`address` - years at current address,\
+`income` - household income in thousands,\
+`debtinc` - debt to income ratio (x100),\
+`creddebt` - credit card debt in thousands,\
+`othdebt` - other debt in thousands,\
+`default` - previously defaulted.
+
+## Checking for the missing values
+
+```{r, warning = FALSE, message = FALSE}
+data %>%
+  summarize_all(~sum(is.na(.)))
+```
+There are no missing values in the data set. The 150 `default` missing values refer to the 150 prospective customers.
+
+## Plotting some of the data
+
+```{r, warning = FALSE, message = FALSE}
+data %>%
+  filter(!is.na(default)) %>% # Considering only the previous customers
+  ggplot(., aes(x = age)) +
+  geom_histogram(alpha = 0.2, col = "black", fill = "blue") +
+  labs(title = "Number of customers by age",
+     x = "Age", y = "Number of customers") +
+  scale_x_continuous(breaks = seq(20, 60, 5)) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r, warning = FALSE, message = FALSE}
+data %>%
+  filter(!is.na(default)) %>%
+  ggplot(., aes(x = ed)) +
+  geom_bar(alpha = 0.2, col = "black", fill = "yellow") +
+  labs(title = "Number of customers by level of education",
+     x = "Level of education", y = "Number of customers") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+```{r, warning = FALSE, message = FALSE}
+data %>%
+  filter(!is.na(default)) %>%
+  ggplot(., aes(x = default)) +
+  geom_bar(alpha = 0.2, col = "black", fill = "red") +
+  labs(title = "Number of customers by default",
+     x = "Default", y = "Number of customers") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## Recoding the variables
+
+```{r, warning = FALSE, message = FALSE}
+data.1 <- data %>%
+  mutate(
+    ed_1 = case_when(ed == "Did not complete high school" ~ 1,
+                     ed != "Did not complete high school" ~ 0),
+    ed_2 = case_when(ed == "High school degree" ~ 1,
+                     ed != "High school degree" ~ 0),
+    ed_3 = case_when(ed == "Some college" ~ 1,
+                     ed != "Some college" ~ 0),
+    ed_4 = case_when(ed == "College degree" ~ 1,
+                     ed != "College degree" ~ 0),
+    ed_5 = case_when(ed == "Post-undergraduate degree" ~ 1,
+                     ed != "Post-undergraduate degree" ~ 0),
+    default_bin = case_when(default == "Yes" ~ 1,
+                            default == "No" ~ 0)
+    ) %>%
+  .[, -c(10:12)]
+head(data.1)
+```
+
+# Which category of "ed" has the biggest fraction of "1"?
+
+```{r, warning = FALSE, message = FALSE}
+data.1 %>%
+  summarize(
+    across(
+      c("ed_1", "ed_2", "ed_3", "ed_4", "ed_5"),
+      ~sum(., na.rm = T)
+    )
+  )
+
+data.2 <- data.1 %>% # To avoid perfect multicollinearity
+  .[, -c(2, 9:10)]
+```
+# Preparing the data for the purpose of validation
+
+## Setting the seed
+
+```{r, results = 'hide', warning = FALSE, message = FALSE}
+set.seed(9191972)
+```
+
+## Creating a Bernoulli variable to distinguish between training and test set
+
+```{r, warning = FALSE, message = FALSE}
+data.3 <- data.2 %>%
+  filter(!is.na(default_bin)) %>% # Considering only the previous customers
+  mutate(
+    validate = rbern(n = 700, prob = 0.3)
+  )
+head(data.3)
+```
+
+## Splitting the data into training and test set
+
+```{r, warning = FALSE, message = FALSE}
+train <- data.3 %>%
+  filter(validate == 0)
+head(train)
+train <- train %>%
+  .[, -c(13)]
+
+test <- data.3 %>%
+  filter(validate == 1)
+head(test)
+test <- test %>%
+  .[, -c(13)]
+```
+# Estimating logit model using top-down approach
+
+## Estimating the first logit model
+
+```{r, warning = FALSE, message = FALSE}
+fit.full <- glm(default_bin ~ ., family = binomial(), data = train)
+summary(fit.full)
+```
+## Estimating the first model with robust standard errors
+
+```{r, warning = FALSE, message = FALSE}
+fit.robust <- coeftest(fit.full, vcov = vcovHC(fit.full, type = "HC"))
+fit.robust
+```
+## Performing Wald test for the insignificant coefficient estimates
+
+```{r, warning = FALSE, message = FALSE}
+linearHypothesis(fit.full, c("income", "othdebt", "ed_2", "ed_3", "ed_4", "ed_5"))
+```
+## Estimating the second logit model
+
+```{r, warning = FALSE, message = FALSE}
+fit.reduced <- glm(default_bin ~ . - income - othdebt - ed_2 - ed_3 - ed_4 - ed_5, family = binomial(), data = train)
+summary(fit.reduced)
+```
+## Computing McFadden R2 for the first logit model
+
+```{r, warning = FALSE, message = FALSE}
+pR2(fit.full)
+```
+## Computing McFadden R2 for the second logit model
+
+```{r, warning = FALSE, message = FALSE}
+pR2(fit.reduced)
+```
+# Evaluating the predictive ability of the model
+
+## Creating classification table
+
+```{r, warning = FALSE, message = FALSE}
+classtab <- table(true = train$default_bin, pred = round(fitted(fit.reduced)))
+classtab
+```
+## Computing count R2
+
+```{r, warning = FALSE, message = FALSE}
+countR2 <- sum(diag(classtab))/sum(classtab)
+countR2
+```
+Interpretation:
+
+The model correctly predicted the values of the dependent variable, within the training set, in `r round(countR2*100, 2)`%.
+
+## Computing adjusted count R2
+
+```{r, warning = FALSE, message = FALSE}
+adjcountR2 <- (sum(diag(classtab))-max(classtab))/(sum(classtab)-max(classtab))
+adjcountR2
+```
+Interpretation:
+
+Correcting for the unbalanced sample, the model correctly predicted the value of the dependent variable, within the training set, in `r round(adjcountR2*100, 2)`%.
+
+## Creating classification table (test set)
+
+```{r, warning = FALSE, message = FALSE}
+classtab.1 <- table(true = test$default_bin, pred = round(predict(fit.reduced, test, type = "response")))
+classtab.1
+```
+## Computing count R2 (test set)
+
+```{r, warning = FALSE, message = FALSE}
+countR2.test <- sum(diag(classtab.1))/sum(classtab.1)
+countR2.test
+```
+Interpretation:
+
+The model correctly predicted the values of the dependent variable, within the test set, in `r round(countR2.test*100, 2)`%.
+
+## Computing adjusted count R2 (test set)
+
+```{r, warning = FALSE, message = FALSE}
+adjcountR2.test <- (sum(diag(classtab.1))-max(classtab.1))/(sum(classtab.1)-max(classtab.1))
+adjcountR2.test
+```
+Interpretation:
+
+Correcting for the unbalanced sample, the model correctly predicted the value of the dependent variable, within the test set, in `r round(adjcountR2.test*100, 2)`%.
+
+# Interpreting the estimation results
+
+## Computing the average marginal effects (AME)
+
+```{r, warning = FALSE, message = FALSE}
+AME <- summary(margins(glm(default_bin ~ age + employ + address + debtinc + creddebt, family = binomial(), data = train)))
+AME
+```
+Interpretations:
+
+Each additional year of living at the current address *reduces* by `r round(abs(AME[1,2]), 4)` (on average) the probability that a given person will default on a loan. Each additional year of living *increases* by `r round(abs(AME[2,2]), 4)` (on average) the probability that a given person will default on a loan. Each additional 1000 of credit card debt *increases* by `r round(abs(AME[3,2]), 4)` (on average) the probability that a given person will default on a loan. Each additional percentage point of debt to income ratio *increases* by `r round(abs(AME[4,2]), 4)` (on average) the probability that a given person will default on a loan. Each additional year of working with the current employer *reduces* by `r round(abs(AME[5,2]), 4)` (on average) the probability that a given person will default on a loan.
+
+All interpretations are given under the *ceteris paribus* assumption.
+
+## Computing Odds Ratio
+
+```{r, warning = FALSE, message = FALSE}
+oddsratio <- exp(coef(fit.reduced))
+oddsratio
+```
+Interpretations:
+
+Each additional year of living *increases* by `r round(abs((1-oddsratio["age"])*100), 2)`% (on average) the chance that a given person will default on a loan. Each additional year of working with the current employer *reduces* by `r round(abs((1-oddsratio["employ"])*100), 2)`% (on average) the chance that a given person will default on a loan. Each additional year of living at the current address *reduces* by `r round(abs((1-oddsratio["address"])*100), 2)`% (on average) the probability that a given person will default on a loan. Each additional percentage point of debt to income ratio *increases* by `r round(abs((1-oddsratio["debtinc"])*100), 2)`% (on average) the probability that a given person will default on a loan. Each additional 1000 of credit card debt *increases* by `r round(abs((1-oddsratio["creddebt"])*100), 2)`% (on average) the probability that a given person will default on a loan.
+
+All interpretations are given under the *ceteris paribus* assumption.
+
+# Forecasting the default of prospective customers
+
+## Calculating the probabilities of default of new customers
+
+```{r}
+newdata <- data.1 %>%
+  filter(is.na(default_bin)) %>%
+  .[, -c(2, 9:10, 15)]
+predict(fit.reduced, newdata, type = "response")
+```
+
