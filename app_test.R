@@ -8,44 +8,29 @@ ui <- fluidPage(
   useShinyjs(),
   theme = shinytheme("flatly"),
   titlePanel("Default Prediction App"),
-  tags$head(
-    tags$style(
-      HTML("
-        #predictionText, #probabilityText {
-          text-align: center;
-        }
-      ")
-    )
-  ),
-  h4("Enter Customer Information"),
-  fluidRow(
-    column(
-      width = 3,
+  sidebarLayout(
+    sidebarPanel(
+      h4("Enter Customer Information"),
       numericInput("age", "Age:", 25),
       selectInput("ed", "Education:", c(
         "Did not complete high school",
         "High school degree",
         "Some college",
         "College degree",
-        "Post-undergraduate degree")),
-      numericInput("employ", "Years with current employer:", 2),
-      numericInput("address", "Years at current address:", 3),
-      actionButton("predictBtn", "Predict")  # Set width to 100%
+        "Post-undergraduate degree"
+      )),
+      numericInput("employ", "Years with Current Employer:", 2),
+      numericInput("address", "Years at Current Address:", 3),
+      numericInput("income", "Household Income (in thousands):", 50),
+      numericInput("debtinc", "Debt to Income Ratio (x100):", 20),
+      numericInput("creddebt", "Credit Card Debt (in thousands):", 5),
+      numericInput("othdebt", "Other Debt (in thousands):", 10),
+      actionButton("predictBtn", "Predict")
     ),
-    column(
-      width = 3,
-      numericInput("income", "Household income (in thousands):", 50),
-      numericInput("debtinc", "Debt to income ratio (in %):", 20),
-      numericInput("creddebt", "Credit card debt (in thousands):", 5),
-      numericInput("othdebt", "Other debt (in thousands):", 10)
-    ),
-    column(
-      width = 6,  # Adjust width as needed
+    mainPanel(
       h4("Prediction Result"),
-      fluidRow(
-        column(12, textOutput("predictionText")),
-        column(12, textOutput("probabilityText"))
-      ),
+      textOutput("predictionText"),
+      textOutput("probabilityText"),
       shinyjs::hidden(
         div(id = "loading_spinner", class = "shiny-progress"),
         h5("Loading...", align = "center")
@@ -88,3 +73,4 @@ server <- function(input, output) {
 }
 
 shinyApp(ui, server)
+

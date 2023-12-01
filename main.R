@@ -7,7 +7,6 @@ library(lmtest)
 library(sandwich)
 library(caret)
 library(xgboost)
-library(pROC)
 
 # Loading the data set
 path <- "D:/Studies/Materials/Second-cycle/I year/I semester/Coding for DS and DM/R/r-project"
